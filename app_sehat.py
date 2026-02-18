@@ -4,7 +4,6 @@ import os
 from datetime import date
 from typing import Any
 
-import google.generativeai as genai
 import streamlit as st
 from supabase import create_client
 
@@ -385,6 +384,23 @@ def build_ai_prompt(berat: float, tinggi: float, pertanyaan: str) -> str:
     return f"{konteks_badan} {pertanyaan}"
 
 
+def ask_ai_coach(prompt: str, api_key: str) -> str | None:
+    try:
+        from google import genai as google_genai
+    except Exception:
+        st.error("Paket AI belum siap. Install dependency `google-genai` terlebih dulu.")
+        return None
+
+    try:
+        client = google_genai.Client(api_key=api_key)
+        response = client.models.generate_content(model=AI_MODEL, contents=prompt)
+    except Exception:
+        st.error("AI Coach gagal merespons. Cek API key atau koneksi.")
+        return None
+
+    return getattr(response, "text", None)
+
+
 def render_ai_section(berat: float, tinggi: float) -> None:
     st.divider()
     st.subheader("Konsultasi dengan AI Diet Coach")
@@ -403,15 +419,9 @@ def render_ai_section(berat: float, tinggi: float) -> None:
 
     prompt = build_ai_prompt(berat, tinggi, pertanyaan)
     with st.spinner("Coach sedang berpikir..."):
-        try:
-            genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-            model = genai.GenerativeModel(AI_MODEL)
-            response = model.generate_content(prompt)
-        except Exception:
-            st.error("AI Coach gagal merespons. Cek API key atau koneksi.")
-            return
-
-    jawaban = getattr(response, "text", "")
+        jawaban = ask_ai_coach(prompt, st.secrets["GOOGLE_API_KEY"])
+    if jawaban is None:
+        return
     if jawaban:
         st.write(jawaban)
     else:
