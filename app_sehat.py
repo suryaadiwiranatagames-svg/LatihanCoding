@@ -1,5 +1,7 @@
 import streamlit as st
 from supabase import create_client
+import google.generativeai as genai
+
 
 # 1. Konek ke Supabase menggunakan rahasia kita
 url = st.secrets["SUPABASE_URL"]
@@ -52,3 +54,23 @@ else:
         # Update ke Supabase agar tersimpan permanen
         supabase.table("profiles").update({"berat": berat, "tinggi": tinggi}).eq("username", user_data['username']).execute()
         st.success(f"Data tersimpan! BMI Anda: {bmi:.2f}")
+
+
+# Konfigurasi AI
+genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+model = genai.GenerativeModel('gemini-2.5-flash')
+st.divider()
+st.subheader("💬 Konsultasi dengan AI Diet Coach")
+
+# Input pertanyaan dari user
+pertanyaan = st.text_input("Tanya apa saja (contoh: menu makan malam sehat untuk saya?)")
+
+if st.button("Tanya Coach"):
+    if pertanyaan:
+        with st.spinner("Coach sedang berpikir..."):
+            # Kita beri konteks ke AI agar jawabannya lebih akurat
+            prompt = f"Saya memiliki berat badan {berat} kg dan tinggi {tinggi} cm. {pertanyaan}"
+            response = model.generate_content(prompt)
+            st.write(response.text)
+    else:
+        st.warning("Tuliskan pertanyaanmu dulu, Surya!")
