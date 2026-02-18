@@ -4,8 +4,10 @@ from app_sehat import (
     build_ai_prompt,
     build_error_text,
     hash_password,
+    is_valid_phone_number,
     kategori_bmi,
     map_db_error_message,
+    validate_registration_input,
     verify_password,
 )
 
@@ -64,6 +66,13 @@ class TestAppCore(unittest.TestCase):
         message = map_db_error_message("some unknown error", "pesan default")
         self.assertEqual(message, "pesan default")
 
+    def test_map_db_error_message_for_missing_column(self):
+        message = map_db_error_message(
+            "column domisili does not exist for relation profiles",
+            "fallback",
+        )
+        self.assertEqual(message, "Kolom profil baru belum ada di database. Jalankan SQL migration dulu.")
+
     def test_build_error_text_from_exception_object(self):
         class DummyException(Exception):
             def __init__(self):
@@ -79,6 +88,73 @@ class TestAppCore(unittest.TestCase):
         self.assertIn("api error", text)
         self.assertIn("profiles_username_uidx", text)
         self.assertIn("23505", text)
+
+    def test_is_valid_phone_number(self):
+        self.assertTrue(is_valid_phone_number("+628123456789"))
+        self.assertTrue(is_valid_phone_number("0812-3456-789"))
+        self.assertFalse(is_valid_phone_number("08abc123"))
+        self.assertFalse(is_valid_phone_number("123"))
+
+    def test_validate_registration_input(self):
+        self.assertEqual(
+            validate_registration_input(
+                nama="",
+                username="surya",
+                password="password123",
+                confirm_password="password123",
+                tempat_lahir="Bandung",
+                no_hp="08123456789",
+                domisili="Jakarta",
+            ),
+            "Semua data pendaftaran wajib diisi.",
+        )
+        self.assertEqual(
+            validate_registration_input(
+                nama="Surya",
+                username="surya",
+                password="password123",
+                confirm_password="password321",
+                tempat_lahir="Bandung",
+                no_hp="08123456789",
+                domisili="Jakarta",
+            ),
+            "Password dan konfirmasi password harus sama.",
+        )
+        self.assertEqual(
+            validate_registration_input(
+                nama="Surya",
+                username="surya",
+                password="pendek",
+                confirm_password="pendek",
+                tempat_lahir="Bandung",
+                no_hp="08123456789",
+                domisili="Jakarta",
+            ),
+            "Password minimal 8 karakter.",
+        )
+        self.assertEqual(
+            validate_registration_input(
+                nama="Surya",
+                username="surya",
+                password="password123",
+                confirm_password="password123",
+                tempat_lahir="Bandung",
+                no_hp="abc123",
+                domisili="Jakarta",
+            ),
+            "No HP tidak valid. Gunakan angka saja (boleh diawali +).",
+        )
+        self.assertIsNone(
+            validate_registration_input(
+                nama="Surya",
+                username="surya",
+                password="password123",
+                confirm_password="password123",
+                tempat_lahir="Bandung",
+                no_hp="+628123456789",
+                domisili="Jakarta",
+            )
+        )
 
 
 if __name__ == "__main__":
