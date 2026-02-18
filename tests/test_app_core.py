@@ -1,6 +1,13 @@
 import unittest
 
-from app_sehat import build_ai_prompt, hash_password, kategori_bmi, verify_password
+from app_sehat import (
+    build_ai_prompt,
+    build_error_text,
+    hash_password,
+    kategori_bmi,
+    map_db_error_message,
+    verify_password,
+)
 
 
 class TestAppCore(unittest.TestCase):
@@ -38,6 +45,40 @@ class TestAppCore(unittest.TestCase):
 
         prompt_without_data = build_ai_prompt(0, 0, "Beri menu sehat")
         self.assertIn("belum mengisi data berat dan tinggi", prompt_without_data)
+
+    def test_map_db_error_message_for_unique_violation(self):
+        message = map_db_error_message(
+            "duplicate key value violates unique constraint profiles_username_uidx",
+            "fallback",
+        )
+        self.assertEqual(message, "Username sudah dipakai. Gunakan username lain.")
+
+    def test_map_db_error_message_for_check_violation(self):
+        message = map_db_error_message(
+            "new row for relation profiles violates check constraint profiles_berat_nonneg",
+            "fallback",
+        )
+        self.assertEqual(message, "Berat dan tinggi tidak boleh bernilai negatif.")
+
+    def test_map_db_error_message_fallback(self):
+        message = map_db_error_message("some unknown error", "pesan default")
+        self.assertEqual(message, "pesan default")
+
+    def test_build_error_text_from_exception_object(self):
+        class DummyException(Exception):
+            def __init__(self):
+                self.message = "duplicate key"
+                self.details = "profiles_username_uidx"
+                self.hint = "username unique"
+                self.code = "23505"
+
+            def __str__(self):
+                return "api error"
+
+        text = build_error_text(DummyException())
+        self.assertIn("api error", text)
+        self.assertIn("profiles_username_uidx", text)
+        self.assertIn("23505", text)
 
 
 if __name__ == "__main__":

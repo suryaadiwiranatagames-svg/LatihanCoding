@@ -46,6 +46,33 @@ def kategori_bmi(bmi: float) -> str:
     return "Obesitas"
 
 
+def build_error_text(exc: Exception) -> str:
+    parts = [str(exc)]
+    for attr in ("message", "details", "hint", "code"):
+        value = getattr(exc, attr, None)
+        if value is not None:
+            parts.append(str(value))
+    return " | ".join(parts).lower()
+
+
+def map_db_error_message(error_text: str, fallback_message: str) -> str:
+    if (
+        "profiles_username_uidx" in error_text
+        or "duplicate key value" in error_text
+        or "23505" in error_text
+    ):
+        return "Username sudah dipakai. Gunakan username lain."
+    if (
+        "profiles_berat_nonneg" in error_text
+        or "profiles_tinggi_nonneg" in error_text
+        or "23514" in error_text
+    ):
+        return "Berat dan tinggi tidak boleh bernilai negatif."
+    if "null value in column" in error_text or "not null" in error_text or "23502" in error_text:
+        return "Data wajib tidak boleh kosong."
+    return fallback_message
+
+
 def get_supabase_client() -> Any:
     if "SUPABASE_URL" not in st.secrets or "SUPABASE_KEY" not in st.secrets:
         st.error("SUPABASE_URL dan SUPABASE_KEY belum diatur di secrets.")
@@ -76,8 +103,9 @@ def register_user(supabase: Any, username: str, password: str) -> None:
             .limit(1)
             .execute()
         )
-    except Exception:
-        st.error("Gagal cek username di database.")
+    except Exception as exc:
+        error_text = build_error_text(exc)
+        st.error(map_db_error_message(error_text, "Gagal cek username di database."))
         return
 
     if existing_user.data:
@@ -93,8 +121,9 @@ def register_user(supabase: Any, username: str, password: str) -> None:
         }
         supabase.table(PROFILE_TABLE).insert(data).execute()
         st.success("Akun berhasil dibuat. Silakan login.")
-    except Exception:
-        st.error("Gagal membuat akun. Coba lagi beberapa saat.")
+    except Exception as exc:
+        error_text = build_error_text(exc)
+        st.error(map_db_error_message(error_text, "Gagal membuat akun. Coba lagi beberapa saat."))
 
 
 def upgrade_legacy_password(supabase: Any, username: str, raw_password: str) -> str | None:
@@ -124,8 +153,9 @@ def login_user(supabase: Any, username: str, password: str) -> None:
             .limit(1)
             .execute()
         )
-    except Exception:
-        st.error("Gagal mengakses database saat login.")
+    except Exception as exc:
+        error_text = build_error_text(exc)
+        st.error(map_db_error_message(error_text, "Gagal mengakses database saat login."))
         return
 
     if not res.data:
@@ -169,8 +199,9 @@ def update_profile_bmi(supabase: Any, username: str, berat: float, tinggi: float
             .execute()
         )
         return True
-    except Exception:
-        st.error("Data gagal disimpan ke database.")
+    except Exception as exc:
+        error_text = build_error_text(exc)
+        st.error(map_db_error_message(error_text, "Data gagal disimpan ke database."))
         return False
 
 
