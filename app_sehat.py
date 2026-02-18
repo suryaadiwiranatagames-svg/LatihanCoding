@@ -1,25 +1,54 @@
 import streamlit as st
+from supabase import create_client
 
-# Tampilan Judul
-st.title("Aplikasi Kesehatan Surya 🥗")
-st.write("Pantau BMI dan progres kesehatanmu di sini.")
+# 1. Konek ke Supabase menggunakan rahasia kita
+url = st.secrets["SUPABASE_URL"]
+key = st.secrets["SUPABASE_KEY"]
+supabase = create_client(url, key)
 
-# Input Data
-nama = st.text_input("Nama kamu:")
-berat = st.number_input("Berat Badan (kg):", min_value=1.0)
-tinggi_cm = st.number_input("Tinggi Badan (cm):", min_value=1.0)
+st.title("Aplikasi Kesehatan Surya & Wisma 🍎")
 
-if st.button("Hitung BMI"):
-    # Logika Matematika
-    tinggi_m = tinggi_cm / 100
-    bmi = berat / (tinggi_m ** 2)
+# 2. Logika "Ingatan" (Session State)
+if "user" not in st.session_state:
+    st.session_state.user = None
+
+if st.session_state.user is None:
+    menu = st.sidebar.selectbox("Menu", ["Login", "Daftar Akun"])
     
-    st.subheader(f"Halo {nama}, BMI kamu adalah: {bmi:.2f}")
-    
-    # Kategori BMI (Berdasarkan logika kesehatan)
-    if bmi < 18.5:
-        st.warning("Kategori: Kekurangan Berat Badan")
-    elif 18.5 <= bmi < 25:
-        st.success("Kategori: Berat Badan Normal (Ideal)")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
+    if menu == "Daftar Akun":
+        if st.button("Buat Akun"):
+            # Masukkan ke tabel profiles di Supabase
+            data = {"username": username, "password": password, "berat": 0, "tinggi": 0}
+            supabase.table("profiles").insert(data).execute()
+            st.success("Akun berhasil dibuat! Silakan pindah ke menu Login.")
+            
     else:
-        st.error("Kategori: Kelebihan Berat Badan")
+        if st.button("Masuk"):
+            # Cek di database
+            res = supabase.table("profiles").select("*").eq("username", username).eq("password", password).execute()
+            if len(res.data) > 0:
+                st.session_state.user = res.data[0]
+                st.rerun()
+            else:
+                st.error("Username atau Password salah!")
+
+else:
+    # --- HALAMAN UTAMA (Sudah Login) ---
+    user_data = st.session_state.user
+    st.sidebar.write(f"Logged in as: **{user_data['username']}**")
+    
+    if st.sidebar.button("Logout"):
+        st.session_state.user = None
+        st.rerun()
+
+    berat = st.number_input("Berat Badan (kg):", value=float(user_data['berat']))
+    tinggi = st.number_input("Tinggi Badan (cm):", value=float(user_data['tinggi']))
+
+    if st.button("Simpan & Hitung BMI"):
+        bmi = berat / ((tinggi/100) ** 2)
+        # Update ke Supabase agar tersimpan permanen
+        supabase.table("profiles").update({"berat": berat, "tinggi": tinggi}).eq("username", user_data['username']).execute()
+        st.success(f"Data tersimpan! BMI Anda: {bmi:.2f}")
