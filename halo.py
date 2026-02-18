@@ -1,0 +1,1 @@
+print("Halo Surya! Mesin Python saya sudah aktif.")
