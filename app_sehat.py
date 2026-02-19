@@ -14,6 +14,11 @@ AUTH_MENU_TARGET_KEY = "auth_menu_target"
 AUTH_RESET_PENDING_KEY = "auth_reset_pending"
 LOGIN_USERNAME_KEY = "login_username"
 LOGIN_PASSWORD_KEY = "login_password"
+FORGOT_USERNAME_KEY = "forgot_username"
+FORGOT_NO_HP_KEY = "forgot_no_hp"
+FORGOT_TANGGAL_LAHIR_KEY = "forgot_tanggal_lahir"
+FORGOT_NEW_PASSWORD_KEY = "forgot_new_password"
+FORGOT_CONFIRM_PASSWORD_KEY = "forgot_confirm_password"
 REG_NAMA_KEY = "reg_nama"
 REG_USERNAME_KEY = "reg_username"
 REG_PASSWORD_KEY = "reg_password"
@@ -88,11 +93,26 @@ def map_db_error_message(error_text: str, fallback_message: str) -> str:
     return fallback_message
 
 
-def is_valid_phone_number(no_hp: str) -> bool:
+def normalize_phone_number(no_hp: str) -> str:
     normalized = no_hp.replace(" ", "").replace("-", "")
     if normalized.startswith("+"):
         normalized = normalized[1:]
+    return normalized
+
+
+def is_valid_phone_number(no_hp: str) -> bool:
+    normalized = normalize_phone_number(no_hp)
     return normalized.isdigit() and 9 <= len(normalized) <= 15
+
+
+def validate_password_pair(password: str, confirm_password: str) -> str | None:
+    if not password or not confirm_password:
+        return "Password dan konfirmasi password wajib diisi."
+    if password != confirm_password:
+        return "Password dan konfirmasi password harus sama."
+    if len(password) < 8:
+        return "Password minimal 8 karakter."
+    return None
 
 
 def validate_registration_input(
@@ -106,13 +126,35 @@ def validate_registration_input(
 ) -> str | None:
     if not all([nama, username, password, confirm_password, tempat_lahir, no_hp, domisili]):
         return "Semua data pendaftaran wajib diisi."
-    if password != confirm_password:
-        return "Password dan konfirmasi password harus sama."
-    if len(password) < 8:
-        return "Password minimal 8 karakter."
+    password_error = validate_password_pair(password, confirm_password)
+    if password_error:
+        return password_error
     if not is_valid_phone_number(no_hp):
         return "No HP tidak valid. Gunakan angka saja (boleh diawali +)."
     return None
+
+
+def validate_profile_input(
+    nama: str, tempat_lahir: str, no_hp: str, domisili: str
+) -> str | None:
+    if not all([nama, tempat_lahir, no_hp, domisili]):
+        return "Nama, tempat lahir, no HP, dan domisili wajib diisi."
+    if not is_valid_phone_number(no_hp):
+        return "No HP tidak valid. Gunakan angka saja (boleh diawali +)."
+    return None
+
+
+def parse_date_value(value: Any, fallback: date | None = None) -> date:
+    if fallback is None:
+        fallback = date.today()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return fallback
+    return fallback
 
 
 def ensure_auth_form_state() -> None:
@@ -122,6 +164,11 @@ def ensure_auth_form_state() -> None:
         AUTH_RESET_PENDING_KEY: False,
         LOGIN_USERNAME_KEY: "",
         LOGIN_PASSWORD_KEY: "",
+        FORGOT_USERNAME_KEY: "",
+        FORGOT_NO_HP_KEY: "",
+        FORGOT_TANGGAL_LAHIR_KEY: date.today(),
+        FORGOT_NEW_PASSWORD_KEY: "",
+        FORGOT_CONFIRM_PASSWORD_KEY: "",
         REG_NAMA_KEY: "",
         REG_USERNAME_KEY: "",
         REG_PASSWORD_KEY: "",
@@ -139,6 +186,11 @@ def ensure_auth_form_state() -> None:
 def clear_auth_form_state() -> None:
     st.session_state[LOGIN_USERNAME_KEY] = ""
     st.session_state[LOGIN_PASSWORD_KEY] = ""
+    st.session_state[FORGOT_USERNAME_KEY] = ""
+    st.session_state[FORGOT_NO_HP_KEY] = ""
+    st.session_state[FORGOT_TANGGAL_LAHIR_KEY] = date.today()
+    st.session_state[FORGOT_NEW_PASSWORD_KEY] = ""
+    st.session_state[FORGOT_CONFIRM_PASSWORD_KEY] = ""
     st.session_state[REG_NAMA_KEY] = ""
     st.session_state[REG_USERNAME_KEY] = ""
     st.session_state[REG_PASSWORD_KEY] = ""
@@ -290,10 +342,199 @@ def login_user(supabase: Any, username: str, password: str) -> bool:
     return True
 
 
+def reset_forgotten_password(
+    supabase: Any,
+    username: str,
+    no_hp: str,
+    tanggal_lahir: date,
+    new_password: str,
+    confirm_password: str,
+) -> bool:
+    if not username or not no_hp:
+        st.warning("Username dan No HP wajib diisi.")
+        return False
+    if not is_valid_phone_number(no_hp):
+        st.warning("No HP tidak valid. Gunakan angka saja (boleh diawali +).")
+        return False
+
+    password_error = validate_password_pair(new_password, confirm_password)
+    if password_error:
+        st.warning(password_error)
+        return False
+
+    try:
+        res = (
+            supabase.table(PROFILE_TABLE)
+            .select("username, no_hp, tanggal_lahir")
+            .eq("username", username)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        error_text = build_error_text(exc)
+        st.error(map_db_error_message(error_text, "Gagal mengakses data akun."))
+        return False
+
+    if not res.data:
+        st.error("Data verifikasi tidak cocok.")
+        return False
+
+    user_row = res.data[0]
+    stored_no_hp = str(user_row.get("no_hp") or "")
+    stored_tanggal_lahir = str(user_row.get("tanggal_lahir") or "")
+    is_phone_match = normalize_phone_number(no_hp) == normalize_phone_number(stored_no_hp)
+    is_birth_date_match = stored_tanggal_lahir.startswith(tanggal_lahir.isoformat())
+
+    if not (is_phone_match and is_birth_date_match):
+        st.error("Data verifikasi tidak cocok.")
+        return False
+
+    try:
+        new_hash = hash_password(new_password)
+        (
+            supabase.table(PROFILE_TABLE)
+            .update({"password": new_hash})
+            .eq("username", username)
+            .execute()
+        )
+    except Exception as exc:
+        error_text = build_error_text(exc)
+        st.error(
+            map_db_error_message(
+                error_text, "Gagal reset password. Coba lagi beberapa saat."
+            )
+        )
+        return False
+
+    st.success("Password berhasil direset. Silakan login dengan password baru.")
+    return True
+
+
+def update_profile_identity(
+    supabase: Any,
+    username: str,
+    nama: str,
+    tempat_lahir: str,
+    tanggal_lahir: date,
+    no_hp: str,
+    domisili: str,
+) -> bool:
+    validation_error = validate_profile_input(nama, tempat_lahir, no_hp, domisili)
+    if validation_error:
+        st.warning(validation_error)
+        return False
+
+    try:
+        payload = {
+            "nama": nama,
+            "tempat_lahir": tempat_lahir,
+            "tanggal_lahir": tanggal_lahir.isoformat(),
+            "no_hp": no_hp,
+            "domisili": domisili,
+        }
+        (
+            supabase.table(PROFILE_TABLE)
+            .update(payload)
+            .eq("username", username)
+            .execute()
+        )
+    except Exception as exc:
+        error_text = build_error_text(exc)
+        st.error(
+            map_db_error_message(
+                error_text, "Data profil gagal disimpan. Coba lagi beberapa saat."
+            )
+        )
+        return False
+
+    st.session_state.user.update(payload)
+    st.success("Data profil berhasil diperbarui.")
+    return True
+
+
+def change_logged_in_password(
+    supabase: Any,
+    username: str,
+    stored_password: str,
+    current_password: str,
+    new_password: str,
+    confirm_password: str,
+) -> bool:
+    if not current_password:
+        st.warning("Password saat ini wajib diisi.")
+        return False
+    if not verify_password(current_password, stored_password):
+        st.error("Password saat ini salah.")
+        return False
+
+    password_error = validate_password_pair(new_password, confirm_password)
+    if password_error:
+        st.warning(password_error)
+        return False
+
+    if verify_password(new_password, stored_password):
+        st.warning("Password baru harus berbeda dari password lama.")
+        return False
+
+    try:
+        new_hash = hash_password(new_password)
+        (
+            supabase.table(PROFILE_TABLE)
+            .update({"password": new_hash})
+            .eq("username", username)
+            .execute()
+        )
+    except Exception as exc:
+        error_text = build_error_text(exc)
+        st.error(
+            map_db_error_message(
+                error_text, "Password gagal diubah. Coba lagi beberapa saat."
+            )
+        )
+        return False
+
+    st.session_state.user["password"] = new_hash
+    st.success("Password berhasil diubah.")
+    return True
+
+
+def render_forgot_password_view(supabase: Any) -> None:
+    username = st.text_input("Username akun", key=FORGOT_USERNAME_KEY).strip()
+    no_hp = st.text_input("No HP yang terdaftar", key=FORGOT_NO_HP_KEY).strip()
+    tanggal_lahir = st.date_input(
+        "Tanggal lahir",
+        key=FORGOT_TANGGAL_LAHIR_KEY,
+        min_value=date(1900, 1, 1),
+        max_value=date.today(),
+    )
+    new_password = st.text_input(
+        "Password baru", type="password", key=FORGOT_NEW_PASSWORD_KEY
+    )
+    confirm_password = st.text_input(
+        "Konfirmasi password baru", type="password", key=FORGOT_CONFIRM_PASSWORD_KEY
+    )
+
+    if st.button("Reset Password"):
+        is_success = reset_forgotten_password(
+            supabase=supabase,
+            username=username,
+            no_hp=no_hp,
+            tanggal_lahir=tanggal_lahir,
+            new_password=new_password,
+            confirm_password=confirm_password,
+        )
+        if is_success:
+            st.session_state[AUTH_RESET_PENDING_KEY] = True
+            st.session_state[AUTH_MENU_TARGET_KEY] = "Login"
+            st.rerun()
+
+
 def render_auth_view(supabase: Any) -> None:
     ensure_auth_form_state()
     apply_pending_auth_state_actions()
-    menu = st.sidebar.selectbox("Menu", ["Login", "Daftar Akun"], key=AUTH_MENU_KEY)
+    menu = st.sidebar.selectbox(
+        "Menu", ["Login", "Daftar Akun", "Lupa Password"], key=AUTH_MENU_KEY
+    )
 
     if menu == "Daftar Akun":
         nama = st.text_input("Nama lengkap", key=REG_NAMA_KEY).strip()
@@ -325,7 +566,7 @@ def render_auth_view(supabase: Any) -> None:
                 st.session_state[AUTH_RESET_PENDING_KEY] = True
                 st.session_state[AUTH_MENU_TARGET_KEY] = "Login"
                 st.rerun()
-    else:
+    elif menu == "Login":
         username = st.text_input("Username", key=LOGIN_USERNAME_KEY).strip()
         password = st.text_input("Password", type="password", key=LOGIN_PASSWORD_KEY)
         if st.button("Masuk"):
@@ -333,6 +574,8 @@ def render_auth_view(supabase: Any) -> None:
             if is_success:
                 st.session_state[AUTH_RESET_PENDING_KEY] = True
                 st.rerun()
+    else:
+        render_forgot_password_view(supabase)
 
 
 def update_profile_bmi(supabase: Any, username: str, berat: float, tinggi: float) -> bool:
@@ -428,6 +671,57 @@ def render_ai_section(berat: float, tinggi: float) -> None:
         st.warning("Coach belum memberi jawaban. Coba pertanyaan lain.")
 
 
+def render_profile_section(supabase: Any, user_data: dict[str, Any]) -> None:
+    st.subheader("Profil Akun")
+
+    default_tanggal_lahir = parse_date_value(user_data.get("tanggal_lahir"), date.today())
+    with st.form("form_edit_profile"):
+        nama = st.text_input("Nama lengkap", value=str(user_data.get("nama") or "")).strip()
+        tempat_lahir = st.text_input(
+            "Tempat lahir", value=str(user_data.get("tempat_lahir") or "")
+        ).strip()
+        tanggal_lahir = st.date_input(
+            "Tanggal lahir",
+            value=default_tanggal_lahir,
+            min_value=date(1900, 1, 1),
+            max_value=date.today(),
+        )
+        no_hp = st.text_input("No HP", value=str(user_data.get("no_hp") or "")).strip()
+        domisili = st.text_input("Domisili", value=str(user_data.get("domisili") or "")).strip()
+        is_submit = st.form_submit_button("Simpan Profil")
+
+    if is_submit:
+        update_profile_identity(
+            supabase=supabase,
+            username=user_data["username"],
+            nama=nama,
+            tempat_lahir=tempat_lahir,
+            tanggal_lahir=tanggal_lahir,
+            no_hp=no_hp,
+            domisili=domisili,
+        )
+
+
+def render_change_password_section(supabase: Any, user_data: dict[str, Any]) -> None:
+    st.subheader("Keamanan Akun")
+
+    with st.form("form_ubah_password"):
+        current_password = st.text_input("Password saat ini", type="password")
+        new_password = st.text_input("Password baru", type="password")
+        confirm_password = st.text_input("Konfirmasi password baru", type="password")
+        is_submit = st.form_submit_button("Ubah Password")
+
+    if is_submit:
+        change_logged_in_password(
+            supabase=supabase,
+            username=user_data["username"],
+            stored_password=str(user_data.get("password", "")),
+            current_password=current_password,
+            new_password=new_password,
+            confirm_password=confirm_password,
+        )
+
+
 def render_dashboard(supabase: Any) -> None:
     user_data = st.session_state.user
     st.sidebar.write(f"Login sebagai: **{user_data['username']}**")
@@ -436,7 +730,11 @@ def render_dashboard(supabase: Any) -> None:
         st.session_state.user = None
         st.rerun()
 
+    render_profile_section(supabase, user_data)
+    st.divider()
     berat, tinggi = render_bmi_section(supabase, user_data)
+    st.divider()
+    render_change_password_section(supabase, user_data)
     render_ai_section(berat, tinggi)
 
 

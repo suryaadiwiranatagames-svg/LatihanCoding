@@ -1,12 +1,17 @@
 import unittest
+from datetime import date
 
 from app_sehat import (
     build_ai_prompt,
     build_error_text,
     hash_password,
     is_valid_phone_number,
+    normalize_phone_number,
+    parse_date_value,
     kategori_bmi,
     map_db_error_message,
+    validate_password_pair,
+    validate_profile_input,
     validate_registration_input,
     verify_password,
 )
@@ -94,6 +99,45 @@ class TestAppCore(unittest.TestCase):
         self.assertTrue(is_valid_phone_number("0812-3456-789"))
         self.assertFalse(is_valid_phone_number("08abc123"))
         self.assertFalse(is_valid_phone_number("123"))
+
+    def test_normalize_phone_number(self):
+        self.assertEqual(normalize_phone_number("+62 812-3456-789"), "628123456789")
+        self.assertEqual(normalize_phone_number("0812 3456 789"), "08123456789")
+
+    def test_validate_password_pair(self):
+        self.assertEqual(
+            validate_password_pair("", ""),
+            "Password dan konfirmasi password wajib diisi.",
+        )
+        self.assertEqual(
+            validate_password_pair("password123", "password321"),
+            "Password dan konfirmasi password harus sama.",
+        )
+        self.assertEqual(
+            validate_password_pair("pendek", "pendek"),
+            "Password minimal 8 karakter.",
+        )
+        self.assertIsNone(validate_password_pair("password123", "password123"))
+
+    def test_validate_profile_input(self):
+        self.assertEqual(
+            validate_profile_input("", "Bandung", "08123456789", "Jakarta"),
+            "Nama, tempat lahir, no HP, dan domisili wajib diisi.",
+        )
+        self.assertEqual(
+            validate_profile_input("Surya", "Bandung", "abc123", "Jakarta"),
+            "No HP tidak valid. Gunakan angka saja (boleh diawali +).",
+        )
+        self.assertIsNone(
+            validate_profile_input("Surya", "Bandung", "08123456789", "Jakarta")
+        )
+
+    def test_parse_date_value(self):
+        self.assertEqual(parse_date_value("2026-02-18").isoformat(), "2026-02-18")
+        self.assertEqual(
+            parse_date_value("invalid-date", fallback=date(2026, 1, 1)).isoformat(),
+            "2026-01-01",
+        )
 
     def test_validate_registration_input(self):
         self.assertEqual(
